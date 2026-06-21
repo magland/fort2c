@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fortc"
+version = "0.1.0"
+description = "A deterministic Fortran-to-C transpiler (fparser2 front end), bit-exact at -O0."
+readme = "README.md"
+requires-python = ">=3.8"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["fortran", "c", "transpiler", "fparser", "source-to-source", "fmm2d"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = ["fparser>=0.1"]
+
+[project.scripts]
+fortc = "fortc.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["fortc"]
