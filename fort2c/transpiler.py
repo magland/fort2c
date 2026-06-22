@@ -849,9 +849,13 @@ class Emitter:
             return [pad + lp + 'continue;']
 
         if k == 'Return_Stmt':
-            if self.s.is_function:
-                return [pad + lp + f'return {cname(self.s.result_name)};']
-            return [pad + lp + 'return;']
+            # Fortran auto-deallocates local allocatables on return; emit the
+            # matching free()s before leaving (free(NULL) is a safe no-op for
+            # allocatables not currently allocated).
+            ret = (f'return {cname(self.s.result_name)};'
+                   if self.s.is_function else 'return;')
+            stmts = self._alloc_frees() + [ret]
+            return [pad + lp + stmts[0]] + [pad + s for s in stmts[1:]]
 
         if k == 'Goto_Stmt':
             tgt = str(walk(node, f03.Label)[0]) if walk(node, f03.Label) else None
@@ -875,14 +879,28 @@ class Emitter:
             return [pad + lp + mallocs[0]] + [pad + m for m in mallocs[1:]]
 
         if k == 'Deallocate_Stmt':
-            return [pad + lp + f'free({cname(str(nm))});'
-                    for nm in walk(node, f03.Name)]
+            # free + NULL so the implicit end-of-scope free (see emit_proc /
+            # Return_Stmt) does not double-free an explicitly deallocated array.
+            out = []
+            for nm in walk(node, f03.Name):
+                cn = cname(str(nm))
+                out.append(f'free({cn});')
+                out.append(f'{cn} = NULL;')
+            return [pad + lp + out[0]] + [pad + o for o in out[1:]]
 
         if k == 'If_Stmt':
             cond = self.expr(node.children[0])
             inner = self._stmt(node.children[1], 0)
-            body = inner[0].strip() if inner else '{}'   # inner may be stripped
-            return [pad + lp + f'if ({cond}) ' + body]
+            if not inner:                       # inner stripped (e.g. a print)
+                return [pad + lp + f'if ({cond}) {{}}']
+            if len(inner) == 1:
+                return [pad + lp + f'if ({cond}) ' + inner[0].strip()]
+            # multi-line inner (e.g. `return` that also frees allocatables):
+            # a single-statement `if` would only guard the first line, so wrap
+            # the whole thing in a block.
+            return ([pad + lp + f'if ({cond}) {{']
+                    + ['    ' + pad + s.strip() for s in inner]
+                    + [pad + '}'])
 
         if k == 'Arithmetic_If_Stmt':
             # IF (e) n1, n2, n3  ->  branch on sign of e (<0, ==0, >0)
@@ -899,6 +917,17 @@ class Emitter:
             return self.do_construct(node, indent)
 
         raise Unsupported(f'statement {k}: {node}')
+
+    def _alloc_frees(self):
+        """free() calls for this scope's local allocatable arrays, in
+        declaration order. Used to mirror Fortran's automatic deallocation of
+        allocatables at every routine exit (return and fall-through)."""
+        frees = []
+        for nm in self.s.syms:
+            sym = self.s.get(nm)
+            if sym.is_alloc and not sym.is_dummy:
+                frees.append(f'free({cname(nm)});')
+        return frees
 
     def lhs(self, node):
         k = cls(node)
@@ -1151,6 +1180,10 @@ def emit_proc(scope):
             em.stmt(st, body, 1)
     scope._xcalls = em.xcalls
     out.extend(body)
+    # Fortran auto-deallocates local allocatables at routine end; free them on
+    # the fall-through path (explicit Return_Stmts free their own; DEALLOCATE
+    # nulls the pointer, so free(NULL) here is a safe no-op).
+    out.extend('    ' + f for f in em._alloc_frees())
     if scope.is_function:
         out.append(f'    return {cname(scope.result_name)};')
     out.append('}')
