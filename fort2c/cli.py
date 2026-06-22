@@ -1,4 +1,4 @@
-"""Command-line interface for fortc."""
+"""Command-line interface for fort2c."""
 
 import argparse
 import sys
@@ -16,7 +16,7 @@ from .transpiler import (
 
 def build_parser():
     p = argparse.ArgumentParser(
-        prog="fortc",
+        prog="fort2c",
         description="A deterministic Fortran-to-C transpiler "
                     "(fparser2 front end), bit-exact at -O0.",
     )
@@ -37,7 +37,7 @@ def build_parser():
                    help="include-guard prefix for the generated header "
                         f"(default: {DEFAULT_GUARD_PREFIX})")
     p.add_argument("--version", action="version",
-                   version=f"fortc {__version__}")
+                   version=f"fort2c {__version__}")
     return p
 
 
@@ -58,7 +58,7 @@ def main(argv=None):
         else:
             print(generate_c(args.source, base, only, args.runtime_header))
     except Unsupported as e:
-        print(f"fortc: unsupported Fortran construct: {e}", file=sys.stderr)
+        print(f"fort2c: unsupported Fortran construct: {e}", file=sys.stderr)
         return 2
     return 0
 

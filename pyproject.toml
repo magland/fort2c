@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fortc"
+name = "fort2c"
 version = "0.1.0"
 description = "A deterministic Fortran-to-C transpiler (fparser2 front end), bit-exact at -O0."
 readme = "README.md"
@@ -19,10 +19,10 @@ classifiers = [
 dependencies = ["fparser>=0.1"]
 
 [project.scripts]
-fortc = "fortc.cli:main"
+fort2c = "fort2c.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest"]
 
 [tool.setuptools]
-packages = ["fortc"]
+packages = ["fort2c"]

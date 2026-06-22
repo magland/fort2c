@@ -2,7 +2,7 @@
 
 import textwrap
 
-import fortc
+import fort2c
 
 
 def _write(tmp_path, name, src):
@@ -25,7 +25,7 @@ def test_integer_function_with_goto(tmp_path):
           goto 100
           end
     """)
-    c = fortc.generate_c(src)
+    c = fort2c.generate_c(src)
     assert "fint FNAME(next235)(double *base)" in c
     assert "L100:" in c and "goto L100;" in c
     assert "(fint)((*base) / 2e0 + .9999e0)" in c
@@ -45,7 +45,7 @@ def test_complex_arithmetic_and_array(tmp_path):
           return
           end
     """)
-    c = fortc.generate_c(src)
+    c = fort2c.generate_c(src)
     assert "fcomplex *charge" in c and "fcomplex *pot" in c
     # left-associative add preserved (no x += a+b reassociation)
     assert "pot[ii - 1] = pot[ii - 1] + rtmp * charge[ii - 1];" in c
@@ -59,7 +59,7 @@ def test_integer_power_is_exact_not_pow(tmp_path):
           return
           end
     """)
-    c = fortc.generate_c(src)
+    c = fort2c.generate_c(src)
     assert "pow(" not in c
     assert "(*x) * (*x)" in c.replace("((*x)) * ((*x))", "(*x) * (*x)")
 
@@ -77,7 +77,7 @@ def test_only_subset_selection(tmp_path):
           return
           end
     """)
-    c = fortc.generate_c(src, only={"a"})
+    c = fort2c.generate_c(src, only={"a"})
     assert "FNAME(a)" in c
     assert "FNAME(b)" not in c
 
@@ -90,14 +90,14 @@ def test_header_generation(tmp_path):
           return
           end
     """)
-    h = fortc.generate_h(src, runtime_header="rt.h", guard_prefix="MY_")
+    h = fort2c.generate_h(src, runtime_header="rt.h", guard_prefix="MY_")
     assert "#ifndef MY_H_H" in h
     assert '#include "rt.h"' in h
     assert "void FNAME(foo)(double *x);" in h
 
 
 def test_unsupported_is_loud(tmp_path):
-    # a formatted WRITE is an executable statement fortc does not translate
+    # a formatted WRITE is an executable statement fort2c does not translate
     src = _write(tmp_path, "u.f", """
           subroutine u(x)
           real *8 x
@@ -106,7 +106,7 @@ def test_unsupported_is_loud(tmp_path):
           end
     """)
     try:
-        fortc.generate_c(src)
-    except fortc.Unsupported:
+        fort2c.generate_c(src)
+    except fort2c.Unsupported:
         return
     raise AssertionError("expected Unsupported on an untranslatable statement")

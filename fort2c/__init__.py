@@ -1,6 +1,6 @@
-"""fortc - a deterministic Fortran-to-C transpiler.
+"""fort2c - a deterministic Fortran-to-C transpiler.
 
-fortc parses Fortran with fparser2 and emits C that follows the gfortran ABI
+fort2c parses Fortran with fparser2 and emits C that follows the gfortran ABI
 (lowercase symbol + trailing underscore, all arguments by pointer, column-major
 arrays). Because it preserves the exact structure of every expression, the
 generated C agrees with gfortran **bit-for-bit at -O0** - the property it was
@@ -14,7 +14,7 @@ Public API
 
 `only` is an optional iterable/set of routine names: emit just that subset
 (the rest of the file is still parsed so same-file calls resolve). Any Fortran
-construct fortc cannot translate raises `Unsupported`.
+construct fort2c cannot translate raises `Unsupported`.
 """
 
 import os

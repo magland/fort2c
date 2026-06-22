@@ -1,6 +1,6 @@
-# fortc
+# fort2c
 
-A **deterministic Fortran → C transpiler**. `fortc` parses Fortran with
+A **deterministic Fortran → C transpiler**. `fort2c` parses Fortran with
 [fparser2](https://github.com/stfc/fparser) and emits C that follows the
 gfortran ABI — lowercase symbol names with a trailing underscore, all arguments
 passed by pointer, column-major array indexing.
@@ -12,7 +12,7 @@ point: it makes a differential test (run the same inputs through the C and the
 original Fortran, compare) a clean pass/fail signal, so a translation can be
 *proven* correct rather than eyeballed.
 
-`fortc` grew out of porting the [fmm2d](https://github.com/flatironinstitute/fmm2d)
+`fort2c` grew out of porting the [fmm2d](https://github.com/flatironinstitute/fmm2d)
 2D Fast Multipole Method library to C (to compile to WebAssembly). It reproduces
 that library's hand translation — 36 files across the Laplace, Helmholtz,
 biharmonic, Stokes and modified-biharmonic solvers — file-for-file, bit-exact.
@@ -29,21 +29,21 @@ pip install -e .          # from a checkout
 ### Command line
 
 ```bash
-fortc path/to/foo.f                 # print foo.c to stdout
-fortc path/to/foo.f --header        # print foo.h to stdout
-fortc path/to/foo.f -o out/         # write out/foo.c and out/foo.h
-fortc path/to/foo.f --only a,b      # emit only routines a and b
-python -m fortc path/to/foo.f       # same, without the console script
+fort2c path/to/foo.f                 # print foo.c to stdout
+fort2c path/to/foo.f --header        # print foo.h to stdout
+fort2c path/to/foo.f -o out/         # write out/foo.c and out/foo.h
+fort2c path/to/foo.f --only a,b      # emit only routines a and b
+python -m fort2c path/to/foo.f       # same, without the console script
 ```
 
 ### Library
 
 ```python
-import fortc
+import fort2c
 
-c_src  = fortc.generate_c("foo.f")              # -> str
-h_src  = fortc.generate_h("foo.f")              # -> str
-c, h   = fortc.transpile_file("foo.f", "out/")  # write both, return paths
+c_src  = fort2c.generate_c("foo.f")              # -> str
+h_src  = fort2c.generate_h("foo.f")              # -> str
+c, h   = fort2c.transpile_file("foo.f", "out/")  # write both, return paths
 ```
 
 ## The support header
@@ -63,7 +63,7 @@ By default the generated header `#include`s `"fmm2d_c.h"` with an `FMM2D_`
 include-guard prefix (the fmm2d convention). Both are configurable:
 
 ```bash
-fortc foo.f --header --runtime-header my_runtime.h --guard-prefix MYLIB_
+fort2c foo.f --header --runtime-header my_runtime.h --guard-prefix MYLIB_
 ```
 
 ## What it handles
