@@ -96,12 +96,105 @@ def test_header_generation(tmp_path):
     assert "void FNAME(foo)(double *x);" in h
 
 
+def test_entry_emits_separate_functions(tmp_path):
+    # An ENTRY point becomes its own C function, sharing the parent routine's
+    # declarations but with the entry's own name and argument list.
+    src = _write(tmp_path, "mm.f", """
+          subroutine mm(a, b, c, n)
+          implicit double precision (a-h,o-z)
+          dimension a(n,n), b(n,n), c(n,n)
+          do i = 1, n
+          do j = 1, n
+          d = 0
+          do k = 1, n
+          d = d + a(i,k) * b(k,j)
+          enddo
+          c(i,j) = d
+          enddo
+          enddo
+          return
+          entry mmt(a, b, c, n)
+          do i = 1, n
+          do j = 1, n
+          d = 0
+          do k = 1, n
+          d = d + a(i,k) * b(j,k)
+          enddo
+          c(i,j) = d
+          enddo
+          enddo
+          return
+          end
+    """)
+    c = fort2c.generate_c(src)
+    assert "void FNAME(mm)(double *a, double *b, double *c, fint *n)" in c
+    assert "void FNAME(mmt)(double *a, double *b, double *c, fint *n)" in c
+    # the entry's body is the transpose form: b is indexed (j,k), not (k,j)
+    assert "b[FA2(j, k, (*n))]" in c
+    # the prototype appears in the header too
+    h = fort2c.generate_h(src)
+    assert "void FNAME(mmt)(double *a, double *b, double *c, fint *n);" in h
+
+
+def test_stop_maps_to_exit(tmp_path):
+    # STOP halts: a bare STOP -> exit(0); an integer code -> exit(code).
+    src = _write(tmp_path, "s.f", """
+          subroutine s(flag)
+          integer flag
+          if (flag .eq. 1) stop
+          if (flag .eq. 2) stop 3
+          return
+          end
+    """)
+    c = fort2c.generate_c(src)
+    assert "exit(0);" in c
+    assert "exit(3);" in c
+    assert "#include <stdlib.h>" in c
+
+
+def test_format_statement_is_stripped(tmp_path):
+    # A labeled FORMAT statement (used by a subroutine WRITE that is itself
+    # stripped as a diagnostic) has no C form and must not raise Unsupported.
+    src = _write(tmp_path, "w.f", """
+          subroutine w(x)
+          real *8 x
+          write(6, 100) x
+ 100      format('x = ', f8.3)
+          return
+          end
+    """)
+    c = fort2c.generate_c(src)
+    assert "void FNAME(w)(double *x)" in c
+    # neither the FORMAT spec nor the stripped WRITE leaves any artifact
+    assert "f8.3" not in c
+    assert "x = " not in c
+
+
+def test_intrinsic_result_passed_by_reference(tmp_path):
+    # Passing a conversion intrinsic (int8 -> INTEGER*8) by reference: the
+    # result is an rvalue, so it must be materialized into a typed temp and the
+    # temp's address passed -- never &int8(...).
+    src = _write(tmp_path, "r.f", """
+          subroutine r(n, a, b, c)
+          integer *8 n
+          double precision a(*), b(*)
+          integer *8 c(*)
+          call dreorderf(int8(3), n, a, b, c)
+          return
+          end
+    """)
+    c = fort2c.generate_c(src)
+    assert "flong f2c_arg1 = (flong)(3);" in c
+    assert "dreorderf_(&f2c_arg1, " in c
+    assert "&int8" not in c          # no address-of an rvalue call result
+
+
 def test_unsupported_is_loud(tmp_path):
-    # a formatted WRITE is an executable statement fort2c does not translate
+    # a READ is an executable statement fort2c does not translate
     src = _write(tmp_path, "u.f", """
           subroutine u(x)
           real *8 x
-          write(6,*) x
+          read(5,*) x
           return
           end
     """)
