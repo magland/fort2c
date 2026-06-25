@@ -81,6 +81,10 @@ class Sym:
         self.is_save = False       # SAVE attribute (persist across calls)
         self.char_len = None       # CHARACTER length (chars), if ctype 'char'
         self.dims = None           # list of (lo_expr, hi_expr) or None
+        self.dim_c = None          # for an ALLOCATE'd array: list of
+                                   # (lo_cstr, extent_cstr) captured at the
+                                   # allocation, so a later reassignment of a
+                                   # bound variable cannot change indexing
         self.value = None          # fparser expr (scalar parameter / data init)
         self.data_values = None    # list of value nodes (whole-array DATA init)
         self.data_map = None       # {c_offset: value node} (subscripted DATA)
@@ -868,21 +872,35 @@ class Emitter:
     def array_index(self, nm, s, args):
         return self._index_lvalue(nm, s, [self.expr(a) for a in args])
 
+    def _dimlo(self, s, k):
+        """Lower bound of dim k as C text. Prefers the value captured at
+        ALLOCATE (s.dim_c) over re-evaluating the (possibly reassigned) bound."""
+        if s.dim_c is not None:
+            return s.dim_c[k][0]
+        return self._lo(s.dims[k][0])
+
+    def _dimext(self, s, k):
+        """Extent (leading dimension) of dim k as C text, preferring the value
+        captured at ALLOCATE (s.dim_c)."""
+        if s.dim_c is not None:
+            return s.dim_c[k][1]
+        return self._extent(s.dims[k])
+
     def _index_lvalue(self, nm, s, idxs):
         """The C lvalue base[offset] for already-emitted index expressions."""
         nm = cname(nm)
         if len(idxs) == 1:
-            lo = self._lo(s.dims[0][0])
+            lo = self._dimlo(s, 0)
             off = self._sub_lo(idxs[0], lo)
             return f'{nm}[{off}]'
         # 1-based 2-/3-D arrays: use the house-style FA2/FA3 macros
-        if all(self._lo(d[0]) == '1' for d in s.dims):
+        if all(self._dimlo(s, k) == '1' for k in range(len(s.dims))):
             if len(idxs) == 2:
-                ld1 = self._extent(s.dims[0])
+                ld1 = self._dimext(s, 0)
                 return f'{nm}[FA2({idxs[0]}, {idxs[1]}, {ld1})]'
             if len(idxs) == 3:
-                ld1 = self._extent(s.dims[0])
-                ld2 = self._extent(s.dims[1])
+                ld1 = self._dimext(s, 0)
+                ld2 = self._dimext(s, 1)
                 return f'{nm}[FA3({idxs[0]}, {idxs[1]}, {idxs[2]}, {ld1}, {ld2})]'
         # general N-D column-major offset (e.g. 0-based carray(0:ldc,0:ldc))
         return f'{nm}[{self._colmajor_offset(s, idxs)}]'
@@ -891,8 +909,8 @@ class Emitter:
         parts = []
         stride = None             # product of extents of dims already seen
         n = len(s.dims)
-        for k, dim in enumerate(s.dims):
-            lo = self._lo(dim[0])
+        for k in range(n):
+            lo = self._dimlo(s, k)
             term = self._sub_lo(idxs[k], lo)
             if k == 0:
                 if term != '0':
@@ -901,7 +919,7 @@ class Emitter:
                 parts.append(f'({term}) * ({stride})')
             # extent of the trailing (assumed-size *) dim is never needed
             if k + 1 < n:
-                ext = self._extent(dim)
+                ext = self._dimext(s, k)
                 stride = ext if stride is None else f'({stride}) * ({ext})'
         return ' + '.join(parts) if parts else '0'
 
@@ -2277,11 +2295,27 @@ class Emitter:
         for alc in walk(node, f03.Allocation):
             nm = str(alc.children[0])
             specs = walk(alc.children[1], f03.Allocate_Shape_Spec)
+            sym = self.s.get(nm)
             # record runtime bounds so later indexing knows leading dims
-            self.s.get(nm).dims = [tuple(sp.children) for sp in specs]
-            exts = [self._extent_from_alloc(sp) for sp in specs]
+            sym.dims = [tuple(sp.children) for sp in specs]
+            # Fortran fixes the array's shape at ALLOCATE; capture each
+            # non-constant extent (and lower bound) into a temp so later
+            # reassignment of a bound variable does not change indexing. The
+            # temp is declared at function scope by _register_alloc_captures.
+            exts, dim_c = [], []
+            for k, sp in enumerate(specs):
+                lo, hi = sp.children
+                lo_c = self._lo(lo) if lo is not None else '1'
+                ext_c = self._extent_from_alloc(sp)
+                if _alloc_dim_needs_capture(sp, self.s):
+                    cap = f'{cname(nm)}_acap{k}'
+                    out.append(f'{cap} = {ext_c};')
+                    ext_c = cap
+                exts.append(ext_c)
+                dim_c.append((lo_c, ext_c))
+            sym.dim_c = dim_c
             size = ' * '.join(f'({e})' for e in exts)
-            ctype = self.s.get(nm).ctype
+            ctype = sym.ctype
             out.append(f'{cname(nm)} = ({ctype} *)malloc(({size}) * sizeof({ctype}));')
         # stat=ierr : we assume malloc succeeds, so report success (0)
         for opt in walk(node, f03.Alloc_Opt):
@@ -2605,6 +2639,35 @@ def _scalar_val(scope, s):
     return em.expr(s.value)
 
 
+def _alloc_dim_needs_capture(sp, scope):
+    """True if an ALLOCATE shape spec's extent is not a compile-time constant
+    (so its value must be captured at allocation rather than re-read later)."""
+    lo, hi = sp.children
+    try:
+        const_eval_int(hi, scope)
+        if lo is not None:
+            const_eval_int(lo, scope)
+        return False
+    except Unsupported:
+        return True
+
+
+def _register_alloc_captures(scope):
+    """Pre-register a function-scope flong temp for every non-constant ALLOCATE
+    extent in the scope, so alloc_stmt can capture the extent there (Sym.dim_c)
+    and emit_decls declares the temp. Must run before emit_decls."""
+    if scope.exec_part is None:
+        return
+    for alc in walk(scope.exec_part, f03.Allocation):
+        shape = alc.children[1] if len(alc.children) > 1 else None
+        if shape is None:
+            continue
+        nm = str(alc.children[0])
+        for k, sp in enumerate(walk(shape, f03.Allocate_Shape_Spec)):
+            if _alloc_dim_needs_capture(sp, scope):
+                scope.sym(f'{cname(nm)}_acap{k}').ctype = 'flong'
+
+
 def entry_scopes(scope):
     """Derived scopes for each ENTRY point of `scope`, sharing its symbol table
     but with the entry's own name, argument list, and body slice."""
@@ -2645,6 +2708,7 @@ def emit_proc(scope):
 
 def _emit_proc_one(scope):
     out = []
+    _register_alloc_captures(scope)         # before emit_decls (declares temps)
     out.append(emit_signature(scope) + '\n{')
     decls = emit_decls(scope)
     out.extend(decls)
