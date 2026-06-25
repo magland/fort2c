@@ -978,7 +978,12 @@ class Emitter:
             p1, l1 = self._char_operand(args[0])
             p2, l2 = self._char_operand(args[1])
             return f'fmm_index({p1}, {l1}, {p2}, {l2})'
-        a = [self.expr(x) for x in args]
+        # CHARACTER actuals (literals/strings) have no scalar C value -- they
+        # pass as pointer + hidden length, handled by _call_args on the generic
+        # user-function path below (and by the char-aware intrinsics above). So
+        # don't force them through expr() here, which has no char-scalar form.
+        a = [None if self.expr_ctype(x) == 'char' else self.expr(x)
+             for x in args]
         t = [self.expr_ctype(x) for x in args]
         cx = t[0] == 'fcomplex' if t else False
         # 'f' picks the single-precision libm variant (sqrtf, sinf, ...) when
@@ -1130,6 +1135,15 @@ class Emitter:
         if up == 'HUGE':
             return {'float': 'FLT_MAX', 'double': 'DBL_MAX',
                     'flong': 'INT64_MAX', 'fint': 'INT32_MAX'}[t[0]]
+        if up == 'RADIX':                      # model base: 2 for IEEE reals
+            return 'FLT_RADIX'
+        if up == 'DIGITS':                     # significant base-RADIX digits
+            return {'float': 'FLT_MANT_DIG', 'double': 'DBL_MANT_DIG',
+                    'fint': '31', 'flong': '63'}[t[0]]
+        if up == 'MINEXPONENT':
+            return 'FLT_MIN_EXP' if t[0] == 'float' else 'DBL_MIN_EXP'
+        if up == 'MAXEXPONENT':
+            return 'FLT_MAX_EXP' if t[0] == 'float' else 'DBL_MAX_EXP'
         if up == 'BIT_SIZE':
             return '64' if t[0] == 'flong' else '32'
         if up == 'KIND':
@@ -1709,6 +1723,24 @@ class Emitter:
             self.pre.append(f'char {tmp}[{ln}];')
             self.pre.append(f'fmm_{fname}({tmp}, {p}, {ln});')
             return tmp, ln
+        # concatenation `a // b // ...` as a value (e.g. an actual argument):
+        # materialize the joined string into a temp buffer and return it with
+        # its total length. (Character *assignment* with // is handled
+        # separately by _char_assign.)
+        if cls(node) == 'Level_3_Expr' and node.children[1] == '//':
+            segs = self._concat_segments(node)
+            if all(ln.isdigit() for _, ln in segs):
+                total = str(sum(int(ln) for _, ln in segs))
+            else:
+                total = ' + '.join(f'({ln})' for _, ln in segs)
+            tmp = self._new_tmp('cat')
+            pos = self._new_tmp('p')
+            self.pre.append(f'char {tmp}[{total}];')
+            self.pre.append(f'fint {pos} = 0;')
+            for ptr, ln in segs:
+                self.pre.append(
+                    f'fmm_strcat({tmp}, {total}, &{pos}, {ptr}, {ln});')
+            return tmp, total
         raise Unsupported(f'character operand {node}')
 
     def _concat_segments(self, node):
@@ -2450,7 +2482,13 @@ class Emitter:
             counter = loop_ctrl.children[1]  # (Name, [start, end, step])
             while_expr = loop_ctrl.children[0]
             if counter is not None:
-                var = cname(str(counter[0]))
+                # The loop variable may be a scalar dummy (passed by reference,
+                # so a pointer in C) -- e.g. an INFO output used as a counter in
+                # a singularity check. Use its lvalue form and parenthesize so
+                # the C increment is `(*info)++`, not the mis-parsed `*info++`.
+                var = self.lhs(counter[0])
+                if var.startswith('*'):
+                    var = f'({var})'
                 vsym = self.s.get(str(counter[0]))
                 vtype = vsym.ctype if vsym and vsym.ctype else 'fint'
                 bounds = counter[1]
