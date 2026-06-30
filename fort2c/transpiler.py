@@ -2497,19 +2497,31 @@ class Emitter:
                 # Fortran fixes the trip count when the loop is entered. Snapshot
                 # the end bound and (variable) step into temps so modifying them
                 # in the body cannot change the iteration count.
-                end = self._loop_snapshot(bounds[1], vtype, out, pad)
+                snaps = []
+                end = self._loop_snapshot(bounds[1], vtype, snaps, pad)
                 if step_node is None:
                     step = '1'
                 else:
-                    step = self._loop_snapshot(step_node, vtype, out, pad)
+                    step = self._loop_snapshot(step_node, vtype, snaps, pad)
+                # A snapshot is an initialized declaration emitted just above the
+                # `for`. If the loop carries a Fortran statement label, a `goto`
+                # targeting it must not jump over those initializers (skipping an
+                # initialized declaration leaves the temp indeterminate -> a
+                # garbage trip count). Anchor the label to a null statement above
+                # the snapshots so the jump lands before them.
+                forlp = lp
+                if lp and snaps:
+                    out.append(pad + lp + ';')
+                    forlp = ''
+                out.extend(snaps)
                 if step == '1':
-                    out.append(pad + lp + f'for ({var} = {start}; {var} <= {end}; {var}++) {{')
+                    out.append(pad + forlp + f'for ({var} = {start}; {var} <= {end}; {var}++) {{')
                 elif step.lstrip('-').isdigit():
                     cmp = '>=' if step.startswith('-') else '<='
-                    out.append(pad + lp + f'for ({var} = {start}; {var} {cmp} {end}; {var} += {step}) {{')
+                    out.append(pad + forlp + f'for ({var} = {start}; {var} {cmp} {end}; {var} += {step}) {{')
                 else:
                     # snapshotted variable step: choose the direction at runtime
-                    out.append(pad + lp + f'for ({var} = {start}; '
+                    out.append(pad + forlp + f'for ({var} = {start}; '
                                f'{step} >= 0 ? {var} <= {end} : {var} >= {end}; '
                                f'{var} += {step}) {{')
             elif while_expr is not None:

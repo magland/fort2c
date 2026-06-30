@@ -189,6 +189,37 @@ def test_intrinsic_result_passed_by_reference(tmp_path):
     assert "&int8" not in c          # no address-of an rvalue call result
 
 
+def test_goto_into_labeled_do_does_not_skip_bound_snapshot(tmp_path):
+    # A `goto` targeting a DO loop whose end bound is non-constant must not jump
+    # over the hoisted trip-count snapshot: skipping an initialized declaration
+    # leaves the temp indeterminate -> a garbage iteration count (this is the
+    # dfft passf/passb `if (ido.gt.2) goto 102` shape). The label has to anchor
+    # to a null statement above the snapshot so the jump lands before it.
+    src = _write(tmp_path, "g.f", """
+          subroutine s(n, m, a)
+          implicit none
+          integer n, m, i
+          double precision a(n)
+          if (m .gt. 0) goto 200
+          do i = 1, n
+             a(i) = 1d0
+          enddo
+          return
+    200   do i = 1, n
+             a(i) = 2d0
+          enddo
+          return
+          end
+    """)
+    c = fort2c.generate_c(src)
+    assert "L200: ;" in c
+    assert "L200: for" not in c          # label is not on the for itself
+    i_label = c.index("L200: ;")
+    i_snap = c.index("f2c_bnd", i_label)
+    i_for = c.index("for (", i_snap)
+    assert i_label < i_snap < i_for      # snapshot runs after the jump target
+
+
 def test_unsupported_is_loud(tmp_path):
     # a READ is an executable statement fort2c does not translate
     src = _write(tmp_path, "u.f", """
