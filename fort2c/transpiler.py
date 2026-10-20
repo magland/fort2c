@@ -1056,15 +1056,15 @@ class Emitter:
         if up == 'DATAN2':
             return f'atan2({a[0]}, {a[1]})'
         if up == 'SIN':
-            return f'sin{fp}({a[0]})'
+            return f'csin({a[0]})' if cx else f'sin{fp}({a[0]})'
         if up == 'DSIN':
             return f'sin({a[0]})'
         if up == 'COS':
-            return f'cos{fp}({a[0]})'
+            return f'ccos({a[0]})' if cx else f'cos{fp}({a[0]})'
         if up == 'DCOS':
             return f'cos({a[0]})'
         if up == 'TAN':
-            return f'tan{fp}({a[0]})'
+            return f'ctan({a[0]})' if cx else f'tan{fp}({a[0]})'
         if up == 'DTAN':
             return f'tan({a[0]})'
         if up == 'ASIN':
@@ -1076,15 +1076,15 @@ class Emitter:
         if up == 'DACOS':
             return f'acos({a[0]})'
         if up == 'SINH':
-            return f'sinh{fp}({a[0]})'
+            return f'csinh({a[0]})' if cx else f'sinh{fp}({a[0]})'
         if up == 'DSINH':
             return f'sinh({a[0]})'
         if up == 'COSH':
-            return f'cosh{fp}({a[0]})'
+            return f'ccosh({a[0]})' if cx else f'cosh{fp}({a[0]})'
         if up == 'DCOSH':
             return f'cosh({a[0]})'
         if up == 'TANH':
-            return f'tanh{fp}({a[0]})'
+            return f'ctanh({a[0]})' if cx else f'tanh{fp}({a[0]})'
         if up == 'DTANH':
             return f'tanh({a[0]})'
         if up == 'LOG10':
